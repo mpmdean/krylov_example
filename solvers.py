@@ -16,10 +16,12 @@ from edrixs.rixs_utils import scattering_mat
 # from .plot_spectrum import get_spectra_from_poles, merge_pole_dicts
 from edrixs.soc import atom_hsoc
 
+from manybody_operator_csr import two_fermion_csr, four_fermion_csr
+
 
 def ed_1v1c_py(shell_name, *, shell_level=None, v_soc=None, c_soc=0,
                v_noccu=1, slater=None, ext_B=None, on_which='spin',
-               v_cfmat=None, v_othermat=None, loc_axis=None, verbose=0):
+               v_cfmat=None, v_othermat=None, loc_axis=None, verbose=0, csr=False):
     """
     Perform ED for the case of two atomic shells, one valence plus one Core
     shell with pure Python solver.
@@ -234,20 +236,30 @@ def ed_1v1c_py(shell_name, *, shell_level=None, v_soc=None, c_soc=0,
         # Build many-body Hamiltonian in Fock basis
         print("edrixs >>> Building Many-body Hamiltonians ...")
     
-    hmat_i = np.zeros((ncfg_i, ncfg_i), dtype=complex)
-    hmat_n = np.zeros((ncfg_n, ncfg_n), dtype=complex)
-    hmat_i[:, :] += two_fermion(emat_i, basis_i, basis_i)
-    hmat_i[:, :] += four_fermion(umat_i, basis_i)
-    hmat_n[:, :] += two_fermion(emat_n, basis_n, basis_n)
-    hmat_n[:, :] += four_fermion(umat_n, basis_n)
+    #hmat_i = np.zeros((ncfg_i, ncfg_i), dtype=complex)
+    #hmat_n = np.zeros((ncfg_n, ncfg_n), dtype=complex)
+    if csr == False:
+        hmat_i = two_fermion(emat_i, basis_i, basis_i)
+        hmat_i += four_fermion(umat_i, basis_i)
+        hmat_n = two_fermion(emat_n, basis_n, basis_n)
+        hmat_n += four_fermion(umat_n, basis_n)
+    else:
+        hmat_i = two_fermion_csr(emat_i, basis_i, basis_i)
+        hmat_i += four_fermion_csr(umat_i, basis_i)
+        hmat_n = two_fermion_csr(emat_n, basis_n, basis_n)
+        hmat_n += four_fermion_csr(umat_n, basis_n)
     if verbose > 0:
         print("edrixs >>> Done !")
 
     # Do exact-diagonalization to get eigenvalues and eigenvectors
     if verbose > 0:
         print("edrixs >>> Exact Diagonalization of Hamiltonians ...")
-    eval_i, evec_i = scipy.linalg.eigh(hmat_i)
-    eval_n, evec_n = scipy.linalg.eigh(hmat_n)
+    if csr == False:
+        eval_i, evec_i = scipy.linalg.eigh(hmat_i)
+        eval_n, evec_n = scipy.linalg.eigh(hmat_n)
+    else:
+        eval_i, evec_i = scipy.linalg.eigh(hmat_i.toarray())
+        eval_n, evec_n = scipy.linalg.eigh(hmat_n.toarray())
     if verbose > 0:
         print("edrixs >>> Done !")
 
@@ -285,13 +297,14 @@ def ed_1v1c_py(shell_name, *, shell_level=None, v_soc=None, c_soc=0,
     trans_op = np.zeros((npol, ncfg_n, ncfg_i), dtype=complex)
     for i in range(npol):
         tmp2[i, 0:v_norb, v_norb:ntot] = tmp_g[i]
+        trans_op[i] = two_fermion(tmp2[i], basis_n, basis_i)
         trans_op[i] = cb_op2(trans_op[i], evec_n, evec_i)
 
     if verbose > 0:
         print("edrixs >>> ED Done !")
 
-    hmat_i = scipy.sparse.csr_matrix(hmat_i)
-    hmat_n = scipy.sparse.csr_matrix(hmat_n)
+#    hmat_i = scipy.sparse.csr_matrix(hmat_i)
+#    hmat_n = scipy.sparse.csr_matrix(hmat_n)
 
     return eval_i, evec_i, eval_n, evec_n, trans_op, basis_i, basis_n, hmat_i, hmat_n, ntot
 
