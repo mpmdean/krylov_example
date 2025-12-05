@@ -47,8 +47,9 @@ def lanczos_tridiagonal(H, v0, m):
         smaller than :math:`m-1` if a lucky breakdown occurs.
     """
     H = aslinearoperator(H)
+    norm_psi = np.linalg.norm(v0)
     n = H.shape[0]
-    v = v0 / np.linalg.norm(v0)
+    v = v0 / norm_psi
     
     alphas = np.zeros(m, dtype=float)
     betas  = np.zeros(m-1, dtype=float)
@@ -57,18 +58,21 @@ def lanczos_tridiagonal(H, v0, m):
     alphas[0] = np.vdot(v, w).real
     w = w - alphas[0] * v
 
+   neff = 1
     for j in range(1, m):
-        betas[j - 1] = np.linalg.norm(w)
-        if betas[j - 1] == 0:
+        beta = np.linalg.norm(w)
+        if beta == 0:
             # lucky breakdown: actual Krylov dimension < m
             return alphas[:j], betas[:j-1]
+        betas[j-1] = beta
         v_old = v
-        v = w / betas[j-1]
-        w = H @ v - betas[j-1] * v_old
+        v = w / beta
+        w = H @ v - beta * v_old
         alphas[j] = np.vdot(v, w).real
         w = w - alphas[j] * v
+        neff += 1
 
-    return alphas, betas
+    return alphas[:neff], betas[:neff-1], norm_psi**2
 
 
 def resolvent_from_tridiag(alphas, betas, C, norm_psi):
