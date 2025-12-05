@@ -58,7 +58,7 @@ def lanczos_tridiagonal(H, v0, m):
     alphas[0] = np.vdot(v, w).real
     w = w - alphas[0] * v
 
-   neff = 1
+    neff = 1
     for j in range(1, m):
         beta = np.linalg.norm(w)
         if beta == 0:
