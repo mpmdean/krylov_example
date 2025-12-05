@@ -1,11 +1,18 @@
 import numpy as np
 from collections import defaultdict
-import scipy.sparse as sp
+import scipy
 
+
+def get_A(x):
+    """Return $\hat{A} \ket{x_i}
+
+    """
+    return 
 
 def two_fermion_csr(emat, lb, rb=None, tol=1E-10):
     """
-    Build matrix form of a two-fermionic operator in the given Fock basis,
+    Build the csr sparse matrix form of a two-fermionic operator
+    in the given Fock basis,
 
     .. math::
 
@@ -64,12 +71,13 @@ def two_fermion_csr(emat, lb, rb=None, tol=1E-10):
                  rows.append(jcfg)
                  cols.append(icfg)
                  data.append(emat[iorb, jorb] * s1 * s2)
-    return sp.coo_matrix((data, (rows, cols)), shape=(nl, nr), dtype=np.complex128).tocsr()
+    return scipy.sparse.coo_matrix((data, (rows, cols)), shape=(nl, nr), dtype=np.complex128).tocsr()
 
 
 def four_fermion_csr(umat, lb, rb=None, tol=1E-10):
     """
-    Build matrix form of a four-fermionic operator in the given Fock basis,
+    Build the csr sparse  matrix form of a four-fermionic operator
+    in the given Fock basis,
 
     .. math::
 
@@ -141,4 +149,4 @@ def four_fermion_csr(umat, lb, rb=None, tol=1E-10):
                  cols.append(icfg)
                  data.append(umat[lorb, korb, jorb, iorb] * s1 * s2 * s3 * s4)
 #                hmat[jcfg, icfg] += umat[lorb, korb, jorb, iorb] * s1 * s2 * s3 * s4
-    return sp.coo_matrix((data, (rows, cols)), shape=(nl, nr), dtype=np.complex128).tocsr()
+    return scipy.sparse.coo_matrix((data, (rows, cols)), shape=(nl, nr), dtype=np.complex128).tocsr()
