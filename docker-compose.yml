@@ -1,16 +1,18 @@
 services:
   edrixs-jupyter:
-      image: edrixs/edrixs
-      volumes:
-        - ./:/home/rixs
-      working_dir: /home/rixs
-      ports:
-        - 8888:8888
-      command: "jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root"
+    image: mpmdean/edrixs_petsc
+    volumes:
+      - ./:/home/rixs
+    working_dir: /home/rixs
+    platform: linux/arm64
+    ports:
+      - "8888:8888"
+    command: >
+      jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+
   edrixs-ipython:
-      image: edrixs/edrixs
-      volumes:
-        - ./:/home/rixs
-      working_dir: /home/rixs
-
-
+    image: mpmdean/edrixs_petsc
+    volumes:
+      - ./:/home/rixs
+    working_dir: /home/rixs
+    platform: linux/arm64
