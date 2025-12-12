@@ -1,5 +1,7 @@
 import numpy as np
 from scipy.sparse.linalg import aslinearoperator
+from petsc4py import PETSc
+from slepc4py import SLEPc
 
 def lanczos_tridiagonal(H, v0, m):
     r"""
@@ -72,3 +74,82 @@ def lanczos_tridiagonal(H, v0, m):
         neff += 1
 
     return alphas[:neff], betas[:neff-1], norm_psi**2
+
+
+def lanczos_tridiagonal_PETSc(hmat, v0, m):
+    r"""
+    Perform the Lanczos tridiagonalization of a Hermitian operator :math:`H`
+    starting from an initial vector :math:`v_0`, producing the diagonal
+    coefficients :math:`\{\alpha_j\}` and off-diagonal coefficients
+    :math:`\{\beta_j\}` of the associated Lanczos tridiagonal matrix.
+
+    The Lanczos algorithm constructs an orthonormal Krylov basis
+    :math:`\{ v_0, v_1, \ldots, v_{m-1} \}` defined by
+    
+    .. math::
+
+        \mathcal{K}_m(H, v_0) =
+        \mathrm{span}\{ v_0,\; H v_0,\; H^2 v_0,\; \ldots,\; H^{m-1} v_0 \}.
+
+    In this basis, the projection of :math:`H` takes the tridiagonal form
+
+    .. math::
+
+        T_m =
+        \begin{pmatrix}
+            \alpha_0 & \beta_0  & 0        & \cdots \\
+            \beta_0  & \alpha_1 & \beta_1  & \cdots \\
+            0        & \beta_1  & \alpha_2 & \cdots \\
+            \vdots   & \vdots   & \vdots   & \ddots
+        \end{pmatrix},
+
+    Parameters
+    ----------
+    H : (n,n) PETSc sparse matrix
+        Hermitian operator for which the Lanczos projection is constructed.
+    v0 : (n,) array-like
+        Initial seed vector :math:`v_0`, which will be normalized internally.
+    m : int
+        Maximum number of Lanczos iterations (Krylov dimension).
+
+    Returns
+    -------
+    alphas : (k,) ndarray
+        Real diagonal coefficients :math:`\alpha_j` of the Lanczos tridiagonal matrix.
+    betas : (k-1,) ndarray
+        Real off-diagonal coefficients :math:`\beta_j`.  The length may be
+        smaller than :math:`m-1` if a lucky breakdown occurs.
+    """
+    #raise Exception("Method still broken")
+    # --- PETSc matrix from SciPy CSR ---
+    H = PETSc.Mat().createAIJ(
+        size=hmat.shape,
+        csr=(hmat.indptr, hmat.indices, hmat.data)
+    )
+    H.assemble()
+    v = H.createVecRight()
+    v.setValues(hmat.shape[0], v0)
+    v.assemble()
+    v.normalize()
+    
+    opts = PETSc.Options()
+    opts['eps_type'] = 'lanczos'
+    opts['eps_lanczos_reorthog'] = 'local'
+    
+    eps = SLEPc.EPS().create()
+    eps.setOperators(H)
+    eps.setProblemType(SLEPc.EPS.ProblemType.HEP)
+    eps.setInitialSpace([v])
+    eps.setDimensions(nev=m)
+    eps.setFromOptions()
+    
+    eps.solve()
+    
+    ds = eps.getDS()
+    T = ds.getMat(SLEPc.DS.MatType.A).getDenseArray()
+    
+    alphas = T.diagonal().copy()
+    betas  = T.diagonal(offset=1).copy()
+
+    return alphas, betas
+
