@@ -68,7 +68,7 @@ def lanczos_tridiagonal(H, v0, m):
         betas[j-1] = beta
         v_old = v
         v = w / beta
-        w = H @ v - beta * v_old
+        w = H @ v - beta * v_old  # can this be distributed? 
         alphas[j] = np.vdot(v, w).real
         w = w - alphas[j] * v
         neff += 1
@@ -120,7 +120,7 @@ def lanczos_tridiagonal_PETSc(hmat, v0, m):
         Real off-diagonal coefficients :math:`\beta_j`.  The length may be
         smaller than :math:`m-1` if a lucky breakdown occurs.
     """
-    #raise Exception("Method still broken")
+    raise Exception("Method still broken")
     # --- PETSc matrix from SciPy CSR ---
     H = PETSc.Mat().createAIJ(
         size=hmat.shape,
