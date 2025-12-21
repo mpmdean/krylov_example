@@ -3,7 +3,7 @@ from scipy.sparse.linalg import aslinearoperator
 from petsc4py import PETSc
 from slepc4py import SLEPc
 
-def lanczos_tridiagonal(H, v0, m):
+def lanczos_tridiagonal_scipy(H, v0, m):
     r"""
     Perform the Lanczos tridiagonalization of a Hermitian operator :math:`H`
     starting from an initial vector :math:`v_0`, producing the diagonal
@@ -68,7 +68,7 @@ def lanczos_tridiagonal(H, v0, m):
         betas[j-1] = beta
         v_old = v
         v = w / beta
-        w = H @ v - beta * v_old  # can this be distributed? 
+        w = H @ v - beta * v_old
         alphas[j] = np.vdot(v, w).real
         w = w - alphas[j] * v
         neff += 1
@@ -76,7 +76,7 @@ def lanczos_tridiagonal(H, v0, m):
     return alphas[:neff], betas[:neff-1], norm_psi**2
 
 
-def lanczos_tridiagonal_PETSc(hmat, v0, m):
+def lanczos_tridiagonal(H, v, m):
     r"""
     Perform the Lanczos tridiagonalization of a Hermitian operator :math:`H`
     starting from an initial vector :math:`v_0`, producing the diagonal
@@ -107,7 +107,7 @@ def lanczos_tridiagonal_PETSc(hmat, v0, m):
     ----------
     H : (n,n) PETSc sparse matrix
         Hermitian operator for which the Lanczos projection is constructed.
-    v0 : (n,) array-like
+    v0 : (n,) PETSc sparse vector
         Initial seed vector :math:`v_0`, which will be normalized internally.
     m : int
         Maximum number of Lanczos iterations (Krylov dimension).
@@ -119,37 +119,33 @@ def lanczos_tridiagonal_PETSc(hmat, v0, m):
     betas : (k-1,) ndarray
         Real off-diagonal coefficients :math:`\beta_j`.  The length may be
         smaller than :math:`m-1` if a lucky breakdown occurs.
+    norm**2: float
+        normalization factor. 
     """
-    raise Exception("Method still broken")
-    # --- PETSc matrix from SciPy CSR ---
-    H = PETSc.Mat().createAIJ(
-        size=hmat.shape,
-        csr=(hmat.indptr, hmat.indices, hmat.data)
-    )
-    H.assemble()
-    v = H.createVecRight()
-    v.setValues(hmat.shape[0], v0)
-    v.assemble()
-    v.normalize()
+    norm = v.normalize()
     
-    opts = PETSc.Options()
-    opts['eps_type'] = 'lanczos'
-    opts['eps_lanczos_reorthog'] = 'local'
+    alphas = np.zeros(m, dtype=float)
+    betas  = np.zeros(m - 1, dtype=float)
     
-    eps = SLEPc.EPS().create()
-    eps.setOperators(H)
-    eps.setProblemType(SLEPc.EPS.ProblemType.HEP)
-    eps.setInitialSpace([v])
-    eps.setDimensions(nev=m)
-    eps.setFromOptions()
+    w = H.createVecLeft()
+    H.mult(v, w)
+    alphas[0] = v.dot(w).real
     
-    eps.solve()
+    w.axpy(-alphas[0], v)
     
-    ds = eps.getDS()
-    T = ds.getMat(SLEPc.DS.MatType.A).getDenseArray()
-    
-    alphas = T.diagonal().copy()
-    betas  = T.diagonal(offset=1).copy()
-
-    return alphas, betas
-
+    neff = 1
+    for j in range(1, m):
+        beta = w.norm()
+        if beta == 0:
+            # lucky breakdown: actual Krylov dimension < m
+            return alphas[:j], betas[:j-1]
+        betas[j-1] = beta
+        v_old = v.copy()
+        v = w.copy()
+        v.scale(1./beta)
+        #v = w / beta
+        w = H @ v - beta * v_old
+        alphas[j] = v.dot(w).real
+        w.axpy(-alphas[j], v)
+        neff += 1
+    return alphas, betas, norm**2
