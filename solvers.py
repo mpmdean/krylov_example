@@ -1,5 +1,6 @@
 import numpy as np
 import scipy
+from scipy.sparse import csr_matrix
 
 from edrixs.angular_momentum import (
     get_sx, get_sy, get_sz, get_lx, get_ly, get_lz, rmat_to_euler, get_wigner_dmat
@@ -244,10 +245,20 @@ def ed_1v1c_py(shell_name, *, shell_level=None, v_soc=None, c_soc=0,
         hmat_n = two_fermion(emat_n, basis_n, basis_n)
         hmat_n += four_fermion(umat_n, basis_n)
     else:
-        hmat_i = two_fermion_csr(emat_i, basis_i, basis_i)
-        hmat_i += four_fermion_csr(umat_i, basis_i)
-        hmat_n = two_fermion_csr(emat_n, basis_n, basis_n)
-        hmat_n += four_fermion_csr(umat_n, basis_n)
+        indptr, indices, data, nl, nr = two_fermion_csr(emat_i, basis_i, basis_i)
+        
+        hmat_i = csr_matrix((data, indices, indptr),
+                               shape=(nl, nr), dtype=np.complex128)
+        indptr, indices, data, nl, nr = four_fermion_csr(umat_i, basis_i)
+        hmat_i += csr_matrix((data, indices, indptr),
+                               shape=(nl, nr), dtype=np.complex128)
+
+        indptr, indices, data, nl, nr = two_fermion_csr(emat_n, basis_n, basis_n)
+        hmat_n = csr_matrix((data, indices, indptr),
+                               shape=(nl, nr), dtype=np.complex128)
+        indptr, indices, data, nl, nr = four_fermion_csr(umat_n, basis_n)
+        hmat_n += csr_matrix((data, indices, indptr),
+                               shape=(nl, nr), dtype=np.complex128)
     if verbose > 0:
         print("edrixs >>> Done !")
 

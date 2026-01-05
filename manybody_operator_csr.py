@@ -32,8 +32,8 @@ def two_fermion_csr(emat, lb, rb=None, tol=1E-10):
 
     Returns
     -------
-    hmat: 2d complex array
-        The matrix form of the two-fermionic operator.
+    indptr, indices, data, nl, nr: various numpy arrays
+        The matrix form of the two-fermionic operator expressed as csr
     """
     if rb is None:
         rb = lb
@@ -71,7 +71,11 @@ def two_fermion_csr(emat, lb, rb=None, tol=1E-10):
                  rows.append(jcfg)
                  cols.append(icfg)
                  data.append(emat[iorb, jorb] * s1 * s2)
-    return scipy.sparse.coo_matrix((data, (rows, cols)), shape=(nl, nr), dtype=np.complex128).tocsr()
+
+    # We want to interface between the functions using csr. Eventually, we need to generate 
+    # these directly, for now, let scipy convert.
+    A = scipy.sparse.coo_matrix((data, (rows, cols)), shape=(nl, nr), dtype=np.complex128).tocsr()
+    return A.indptr, A.indices, A.data, nl, nr
 
 
 def four_fermion_csr(umat, lb, rb=None, tol=1E-10):
@@ -98,8 +102,8 @@ def four_fermion_csr(umat, lb, rb=None, tol=1E-10):
 
     Returns
     -------
-    hmat: 2d complex array
-        The matrix form of the four-fermionic operator.
+    indptr, indices, data, nl, nr: various numpy arrays
+        The matrix form of the two-fermionic operator expressed as csr
     """
     if rb is None:
         rb = lb
@@ -149,4 +153,8 @@ def four_fermion_csr(umat, lb, rb=None, tol=1E-10):
                  cols.append(icfg)
                  data.append(umat[lorb, korb, jorb, iorb] * s1 * s2 * s3 * s4)
 #                hmat[jcfg, icfg] += umat[lorb, korb, jorb, iorb] * s1 * s2 * s3 * s4
-    return scipy.sparse.coo_matrix((data, (rows, cols)), shape=(nl, nr), dtype=np.complex128).tocsr()
+    #return scipy.sparse.coo_matrix((data, (rows, cols)), shape=(nl, nr), dtype=np.complex128).tocsr()
+        # We want to interface between the functions using csr. Eventually, we need to generate 
+    # these directly, for now, let scipy convert.
+    A = scipy.sparse.coo_matrix((data, (rows, cols)), shape=(nl, nr), dtype=np.complex128).tocsr()
+    return A.indptr, A.indices, A.data, nl, nr

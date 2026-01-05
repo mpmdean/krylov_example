@@ -143,7 +143,6 @@ def lanczos_tridiagonal(H, v, m):
         v_old = v.copy()
         v = w.copy()
         v.scale(1./beta)
-        #v = w / beta
         w = H @ v - beta * v_old
         alphas[j] = v.dot(w).real
         w.axpy(-alphas[j], v)
