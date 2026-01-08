@@ -1,3 +1,14 @@
 __pycache__
 .ipynb_checkpoints
 .DS_Store
+
+config.in
+coulomb_*.in
+hopping_*.in
+denmat.dat
+eigvals.dat
+eigvec.*
+fock_*.in
+rixs_poles.*
+transop_rixs_*.in
+
