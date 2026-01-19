@@ -2,13 +2,6 @@ import numpy as np
 from collections import defaultdict
 import scipy
 
-
-def get_A(x):
-    """Return $\hat{A} \ket{x_i}
-
-    """
-    return 
-
 def two_fermion_csr(emat, lb, rb=None, tol=1E-10):
     """
     Build the csr sparse matrix form of a two-fermionic operator
