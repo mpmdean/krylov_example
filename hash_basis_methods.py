@@ -7,9 +7,6 @@ from typing import List, Tuple
 from itertools import accumulate
 
 
-# MPMD norb N occu M notation messed up
-# is there are preferred notation for integer to bistring? 
-# 
 @dataclass(slots=True)
 class FockBinByN:
     """Basis class to handle the product space of fixed-particle-number
@@ -22,9 +19,9 @@ class FockBinByN:
 
     Attributes
     ----------
-    norb
+    norbs
         Number of orbitals in each subspace.
-    noccu
+    noccus
         Number of particles in each subspace.
     sizes
         Dimension of each subspace, ``comb(norb[i], noccu[i])``.
@@ -36,8 +33,8 @@ class FockBinByN:
         Number of states in basis
     """
     shapes: List[Tuple[int, int]]
-    norb: List[int] = field(init=False)
-    noccu: List[int] = field(init=False)
+    norbs: List[int] = field(init=False)
+    noccus: List[int] = field(init=False)
     sizes: List[int] = field(init=False)
 
     num_subspaces: int = field(init=False)
@@ -48,27 +45,22 @@ class FockBinByN:
     strides: Tuple[int, ...] = field(init=False)
     min_decode: int = field(init=False)
     max_decode: int = field(init=False)
-    #maxs: Tuple[int, ...] = field(init=False)
-    #mins: Tuple[int, ...] = field(init=False)
 
     def __post_init__(self) -> None:
-        self.norb = [int(norb) for (norb, _) in self.shapes]
-        self.noccu = [int(nocc) for (_, nocc) in self.shapes]
+        self.norbs = [int(norb) for (norb, _) in self.shapes]
+        self.noccus = [int(nocc) for (_, nocc) in self.shapes]
         self.sizes = [comb(norb, nocc) for (norb, nocc) in self.shapes]
-        self.num_subspaces = len(self.norb)
-        self.num_orbitals = sum(self.norb)
+        self.num_subspaces = len(self.norbs)
+        self.num_orbitals = sum(self.norbs)
         self.dim = prod(self.sizes)
-    
-        # --- OFFSETS: put earlier subspaces in higher bits (big-endian packing)
+
         running = self.num_orbitals
         offsets = []
-        for N in self.norb:
+        for N in self.norbs:
             running -= N
             offsets.append(running)
         self.offsets = tuple(offsets)
-    
-        #self.mins = [(1 << nocc) - 1 for (_, nocc) in self.shapes]
-        #self.maxs = [((1 << nocc) - 1) << (norb - nocc) for (norb, nocc) in self.shapes]
+
         extrema = min_max_decode(self.shapes)
         self.min_decode = extrema[0]
         self.max_decode = extrema[1]
@@ -100,15 +92,13 @@ class FockBinByN:
 
         for n in range(self.num_subspaces):
             start = self.offsets[n]
-            N = self.norb[n]
-            M = self.noccu[n]
+            N = self.norbs[n]
+            M = self.noccus[n]
             mask = (1 << N) - 1
 
             sub_bits = (b >> start) & mask
             if sub_bits.bit_count() != M:
                 return -1
-            #if sub_bits< self.mins[n] or sub_bits > self.maxs[n]: MPMD remove!!
-            #    return -1
 
             sub_rank = hash_encoder(sub_bits, N, M)
             index += sub_rank * self.strides[n]
@@ -136,7 +126,7 @@ class FockBinByN:
             sub_rank = index % d
             index //= d
 
-            sub_bits = hash_decoder(sub_rank, self.norb[n], self.noccu[n])
+            sub_bits = hash_decoder(sub_rank, self.norbs[n], self.noccus[n])
             b |= (sub_bits << self.offsets[n])
 
         return b
@@ -201,22 +191,51 @@ def hash_encoder(b: int, N: int, M: int) -> int:
     int
         Rank of the state.
     """
-    if b.bit_count() != M: # MPMD needed
-        return -1
-
     b = int(b) & ((1 << N) - 1)
 
     r = 0
     k = 1
     while b:
         lsb = b & -b
-        pos = lsb.bit_length() - 1  # index of that 1-bit
+        pos = lsb.bit_length() - 1
         r += comb(pos, k)
         k += 1
         b ^= lsb
     return r
 
-    
+
+def sign_count(b: int, orb: int, norb: int) -> int:
+    """(-1)**(number of 1) up to position orb
+    in b."""
+    bitpos = norb - 1 - orb
+    prefix = b >> (bitpos + 1)
+    return 1 if (prefix.bit_count() % 2 == 0) else -1
+
+
+def bit_at_orb(b: int, orb: int, norb: int) -> int:
+    """
+    Return the bit value at orbital `orb` in b
+    """
+    bitpos = norb - 1 - orb
+    return (b >> bitpos) & 1
+
+
+def set_zero_at_orb(b: int, orb: int, norb: int) -> int:
+    """
+    Return a new integer where b[orb] == 0,
+    """
+    bitpos = norb - 1 - orb
+    return b & ~(1 << bitpos)
+
+
+def set_one_at_orb(b: int, orb: int, norb: int) -> int:
+    """
+    Return a new integer where b[orb] == 1,
+    """
+    bitpos = norb - 1 - orb
+    return b | (1 << bitpos)
+
+
 def two_fermion_B(emat, lb, rb=None, tol=1E-10):
     """
     Build the csr sparse matrix form of a two-fermionic operator
@@ -252,26 +271,21 @@ def two_fermion_B(emat, lb, rb=None, tol=1E-10):
     rows = []
     cols = []
     data = []
-
-    #tmp_basis = []*rb.num_orbitals
-    tmp_basis = np.zeros(rb.num_orbitals, dtype=int)  # MPMD check me
+    norb = rb.num_orbitals
+    
     for iorb, jorb in nonzero:
         for icfg in range(rb.dim):
-            # tmp_basis[:] = rb.decode(icfg)  MPMD hack converstion for now!!!!!
             b = rb.decode(icfg)
-            tmp_basis[:] = int2list(b, rb.num_orbitals)
-            if tmp_basis[jorb] == 0:
+            if bit_at_orb(b, jorb, norb) == 0:
                 continue
             else:
-                s1 = (-1)**np.count_nonzero(tmp_basis[0:jorb])
-                tmp_basis[jorb] = 0
-            if tmp_basis[iorb] == 1:
+                s1 = sign_count(b, jorb, norb)
+                b = set_zero_at_orb(b, jorb, norb)
+            if bit_at_orb(b, iorb, norb) == 1:
                 continue
             else:
-                s2 = (-1)**np.count_nonzero(tmp_basis[0:iorb])
-                tmp_basis[iorb] = 1
-            # jcfg = lb.encode(tmp_basis) MPMD hack converstion for now!!!!!
-            b = list2int(tmp_basis)
+                s2 = sign_count(b, iorb, norb)
+                b = set_one_at_orb(b, iorb, norb)
             jcfg = lb.encode(b)
             if jcfg != -1:
                  rows.append(jcfg)
@@ -320,38 +334,33 @@ def four_fermion_B(umat, lb, rb=None, tol=1E-10):
     rows = []
     cols = []
     data = []
+    norb = rb.num_orbitals
 
-    # tmp_basis = []*rb.num_orbitals
-    tmp_basis = np.zeros(rb.num_orbitals, dtype=int) # MPMD?
     for lorb, korb, jorb, iorb in nonzero:
         if iorb == jorb or korb == lorb:
             continue
         for icfg in range(rb.dim):
-            # tmp_basis[:] = rb.decode(icfg) MPMD hack converstion for now!!!!!
             b = rb.decode(icfg)
-            tmp_basis[:] = int2list(b, rb.num_orbitals)
-            if tmp_basis[iorb] == 0:
+            if bit_at_orb(b, iorb, norb) == 0:
                 continue
             else:
-                s1 = (-1)**np.count_nonzero(tmp_basis[0:iorb])
-                tmp_basis[iorb] = 0
-            if tmp_basis[jorb] == 0:
+                s1 = sign_count(b, iorb, norb)
+                b = set_zero_at_orb(b, iorb, norb)
+            if bit_at_orb(b, jorb, norb) == 0:
                 continue
             else:
-                s2 = (-1)**np.count_nonzero(tmp_basis[0:jorb])
-                tmp_basis[jorb] = 0
-            if tmp_basis[korb] == 1:
+                s2 = sign_count(b, jorb, norb)
+                b = set_zero_at_orb(b, jorb, norb)
+            if bit_at_orb(b, korb, norb) == 1:
                 continue
             else:
-                s3 = (-1)**np.count_nonzero(tmp_basis[0:korb])
-                tmp_basis[korb] = 1
-            if tmp_basis[lorb] == 1:
+                s3 = sign_count(b, korb, norb)
+                b = set_one_at_orb(b, korb, norb)
+            if bit_at_orb(b, lorb, norb) == 1:
                 continue
             else:
-                s4 = (-1)**np.count_nonzero(tmp_basis[0:lorb])
-                tmp_basis[lorb] = 1
-            # jcfg = lb.encode(tmp_basis) MPMD hack converstion for now!!!!!
-            b = list2int(tmp_basis)
+                s4 = sign_count(b, lorb, norb)
+                b = set_one_at_orb(b, lorb, norb)
             jcfg = lb.encode(b)
             if jcfg != -1:
                  rows.append(jcfg)
@@ -365,6 +374,9 @@ def four_fermion_B(umat, lb, rb=None, tol=1E-10):
 
 
 def min_max_decode(shapes):
+    """Smallest and largest decoding values for a specific
+    shape. Needed to block attempts to rank integers out 
+    of range."""
     Ns = [N for N, _ in shapes]
     totalN = sum(Ns)
 
@@ -379,15 +391,7 @@ def min_max_decode(shapes):
         b_max |= sub_max << running
 
     return b_min, b_max
-
-
-# DELETE ME LATER JUST FOR CHECKS
-def int2list(b, w):
-    return np.array([int(i) for i in np.binary_repr(b, width=w)])
-
-def list2int(l):
-    return sum(i*(2**n) for n, i in enumerate(l[::-1]))
-    
+ 
 
 from petsc4py import PETSc
 
