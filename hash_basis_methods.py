@@ -4,8 +4,12 @@ from math import comb, prod
 
 from dataclasses import dataclass, field
 from typing import List, Tuple
+from itertools import accumulate
 
 
+# MPMD norb N occu M notation messed up
+# is there are preferred notation for integer to bistring? 
+# 
 @dataclass(slots=True)
 class FockBinByN:
     """Basis class to handle the product space of fixed-particle-number
@@ -27,7 +31,7 @@ class FockBinByN:
     num_subspaces
         Number of subspaces
     num_orbitals
-        MNmber of orbitals
+        Number of orbitals
     dim
         Number of states in basis
     """
@@ -40,6 +44,13 @@ class FockBinByN:
     num_orbitals: int = field(init=False)
     dim: int = field(init=False)
 
+    offsets: Tuple[int, ...] = field(init=False)
+    strides: Tuple[int, ...] = field(init=False)
+    min_decode: int = field(init=False)
+    max_decode: int = field(init=False)
+    #maxs: Tuple[int, ...] = field(init=False)
+    #mins: Tuple[int, ...] = field(init=False)
+
     def __post_init__(self) -> None:
         self.norb = [int(norb) for (norb, _) in self.shapes]
         self.noccu = [int(nocc) for (_, nocc) in self.shapes]
@@ -47,43 +58,64 @@ class FockBinByN:
         self.num_subspaces = len(self.norb)
         self.num_orbitals = sum(self.norb)
         self.dim = prod(self.sizes)
+    
+        # --- OFFSETS: put earlier subspaces in higher bits (big-endian packing)
+        running = self.num_orbitals
+        offsets = []
+        for N in self.norb:
+            running -= N
+            offsets.append(running)
+        self.offsets = tuple(offsets)
+    
+        #self.mins = [(1 << nocc) - 1 for (_, nocc) in self.shapes]
+        #self.maxs = [((1 << nocc) - 1) << (norb - nocc) for (norb, nocc) in self.shapes]
+        extrema = min_max_decode(self.shapes)
+        self.min_decode = extrema[0]
+        self.max_decode = extrema[1]
+
+        stride = 1
+        strides = [0] * self.num_subspaces
+        for n in reversed(range(self.num_subspaces)):
+            strides[n] = stride
+            stride *= self.sizes[n]
+        self.strides = tuple(strides)
 
 
-    def encode(self, occupations: List[int]) -> int:
+    def encode(self, b: int) -> int:
         """Encode occupations into a basis index.
     
         Parameters
         ----------
-        occupations
-            Concatenated 0/1 occupation vector across all subspaces.
+        b: int
+            0/1 occupation vector encoded as an integer
     
         Returns
         -------
         index
             Basis index in ``[0, space.dim - 1]``.
         """
-        start = 0
-        sub_ranks: List[int] = [0] * self.num_subspaces
-    
-        for n in range(self.num_subspaces):
-            norb = self.norb[n]
-            sub_ranks[n] = hash_encoder([x for x in occupations[start : start + norb]])
-            start += norb
-
         index = 0
-        stride = 1
-        for n in range(self.num_subspaces):
-            index += sub_ranks[n] * stride
-            stride *= self.sizes[n]
+        if b < self.min_decode or b > self.max_decode:
+            return -1
 
-        # return -1 if occupations is not in basis
-        if index == 0:
-            if occupations != self.decode(0):
+        for n in range(self.num_subspaces):
+            start = self.offsets[n]
+            N = self.norb[n]
+            M = self.noccu[n]
+            mask = (1 << N) - 1
+
+            sub_bits = (b >> start) & mask
+            if sub_bits.bit_count() != M:
                 return -1
-            
+            #if sub_bits< self.mins[n] or sub_bits > self.maxs[n]: MPMD remove!!
+            #    return -1
+
+            sub_rank = hash_encoder(sub_bits, N, M)
+            index += sub_rank * self.strides[n]
+
         return index
 
-    def decode(self, index: int) -> List[int]:
+    def decode(self, index: int) -> int:
         """Decode a basis index into occupations.
     
         Parameters
@@ -93,61 +125,50 @@ class FockBinByN:
     
         Returns
         -------
-        list of int
-            Concatenated 0/1 occupation vector across all subspaces.
+        b: int
+            0/1 occupation vector encoded as an integer
 
         """
-        occupations: List[int] = []
-        for n in range(self.num_subspaces):
+        b = 0
+
+        for n in reversed(range(self.num_subspaces)):
             d = self.sizes[n]
             sub_rank = index % d
             index //= d
-            occupations.extend(hash_decoder(sub_rank, self.norb[n], self.noccu[n]))
-    
-        return occupations
+
+            sub_bits = hash_decoder(sub_rank, self.norb[n], self.noccu[n])
+            b |= (sub_bits << self.offsets[n])
+
+        return b
 
 
-def hash_decoder(r: int, N: int, M: int) -> List[int]:
-    """Unrank a fixed-weight bitstring.
+def hash_decoder(r: int, N: int, M: int) -> int:
+    """Unrank a bitstring encoded as an integer.
 
     Parameters
     ----------
-    r
+    r: int
         Rank in ``[0, comb(N, M) - 1]``.
-    N
+    N: int
         Bitstring length (number of orbitals).
-    M
+    M: int
         Number of ones.
 
     Returns
     -------
-    list of int
-        Length-``N`` list of 0/1 values with exactly ``M`` ones.
+    b: int
+        0/1 occupation vector encoded as an integer
 
     """
-    N = int(N)
-    M = int(M)
-    rank = int(r)
-
-    total = comb(N, M)
-    if rank < 0 or rank >= total:
-        raise ValueError(f"r must be in [0, {total - 1}], got {r}.")
-
-    if M == 0:
-        return [0] * N
-    if M == N:
-        return [1] * N
-
-    occ = [0] * N
+    b = 0
     j = M
     i = N - 1
 
-    c = comb(i, j)
-
+    c = comb(i, j) # MPMD store me?
     while i >= 0 and j > 0:
-        if c <= rank:
-            occ[i] = 1
-            rank -= c
+        if c <= r:
+            b |= (1 << i)
+            r -= c
             old_i, old_j = i, j
             i -= 1
             j -= 1
@@ -160,49 +181,42 @@ def hash_decoder(r: int, N: int, M: int) -> List[int]:
             c = (c * (i - j)) // i
             i -= 1
 
-    return occ
+    return b
 
 
-def hash_encoder(occ: List[int]) -> int:
-    """Rank a fixed-weight bitstring.
+def hash_encoder(b: int, N: int, M: int) -> int:
+    """Rank a fixed-weight bitstring encoded as an integer.
 
     Parameters
     ----------
-    occ
-        0/1 occupation vector.
+    b:int
+        0/1 occupation vector encoded as an integer
+    N: int
+        Bitstring length (number of orbitals).
+    M: int
+        Number of ones.
 
     Returns
     -------
     int
         Rank of the state.
-
-    Notes
-    -----
-    The rank ordering is consistent with :func:`hash_decoder`, i.e.
-    ``hash_decoder(hash_encoder(occ), N, sum(occ)) == occ`` for valid inputs.
     """
-    M = len(occ)
+    if b.bit_count() != M: # MPMD needed
+        return -1
+
+    b = int(b) & ((1 << N) - 1)
+
     r = 0
-    j = 1  # next '1' will be the j-th one
-    c = 0
-
-    for i in range(M):
-        if int(occ[i]) != 0:
-            c_old = c
-            r += c_old
-            j += 1
-            c = (c_old * (i + 1)) // j
-        else:
-            if j > i + 1:
-                c = 0
-            elif j == i + 1:
-                c = 1
-            else:
-                c = (c * (i + 1)) // (i + 1 - j)
-
+    k = 1
+    while b:
+        lsb = b & -b
+        pos = lsb.bit_length() - 1  # index of that 1-bit
+        r += comb(pos, k)
+        k += 1
+        b ^= lsb
     return r
 
-
+    
 def two_fermion_B(emat, lb, rb=None, tol=1E-10):
     """
     Build the csr sparse matrix form of a two-fermionic operator
@@ -239,10 +253,13 @@ def two_fermion_B(emat, lb, rb=None, tol=1E-10):
     cols = []
     data = []
 
-    tmp_basis = []*rb.num_orbitals
+    #tmp_basis = []*rb.num_orbitals
+    tmp_basis = np.zeros(rb.num_orbitals, dtype=int)  # MPMD check me
     for iorb, jorb in nonzero:
         for icfg in range(rb.dim):
-            tmp_basis[:] = rb.decode(icfg)
+            # tmp_basis[:] = rb.decode(icfg)  MPMD hack converstion for now!!!!!
+            b = rb.decode(icfg)
+            tmp_basis[:] = int2list(b, rb.num_orbitals)
             if tmp_basis[jorb] == 0:
                 continue
             else:
@@ -253,7 +270,9 @@ def two_fermion_B(emat, lb, rb=None, tol=1E-10):
             else:
                 s2 = (-1)**np.count_nonzero(tmp_basis[0:iorb])
                 tmp_basis[iorb] = 1
-            jcfg = lb.encode(tmp_basis)
+            # jcfg = lb.encode(tmp_basis) MPMD hack converstion for now!!!!!
+            b = list2int(tmp_basis)
+            jcfg = lb.encode(b)
             if jcfg != -1:
                  rows.append(jcfg)
                  cols.append(icfg)
@@ -302,12 +321,15 @@ def four_fermion_B(umat, lb, rb=None, tol=1E-10):
     cols = []
     data = []
 
-    tmp_basis = []*rb.num_orbitals
+    # tmp_basis = []*rb.num_orbitals
+    tmp_basis = np.zeros(rb.num_orbitals, dtype=int) # MPMD?
     for lorb, korb, jorb, iorb in nonzero:
         if iorb == jorb or korb == lorb:
             continue
         for icfg in range(rb.dim):
-            tmp_basis[:] = rb.decode(icfg)
+            # tmp_basis[:] = rb.decode(icfg) MPMD hack converstion for now!!!!!
+            b = rb.decode(icfg)
+            tmp_basis[:] = int2list(b, rb.num_orbitals)
             if tmp_basis[iorb] == 0:
                 continue
             else:
@@ -328,7 +350,9 @@ def four_fermion_B(umat, lb, rb=None, tol=1E-10):
             else:
                 s4 = (-1)**np.count_nonzero(tmp_basis[0:lorb])
                 tmp_basis[lorb] = 1
-            jcfg = lb.encode(tmp_basis)
+            # jcfg = lb.encode(tmp_basis) MPMD hack converstion for now!!!!!
+            b = list2int(tmp_basis)
+            jcfg = lb.encode(b)
             if jcfg != -1:
                  rows.append(jcfg)
                  cols.append(icfg)
@@ -339,6 +363,31 @@ def four_fermion_B(umat, lb, rb=None, tol=1E-10):
     A = coo_matrix((data, (rows, cols)), shape=(lb.dim, rb.dim), dtype=np.complex128).tocsr()
     return A.indptr, A.indices, A.data, lb.dim, rb.dim
 
+
+def min_max_decode(shapes):
+    Ns = [N for N, _ in shapes]
+    totalN = sum(Ns)
+
+    b_min = 0
+    b_max = 0
+    running = totalN
+    for (N, M) in shapes:
+        running -= N
+        sub_min = (1 << M) - 1
+        sub_max = ((1 << M) - 1) << (N - M)
+        b_min |= sub_min << running
+        b_max |= sub_max << running
+
+    return b_min, b_max
+
+
+# DELETE ME LATER JUST FOR CHECKS
+def int2list(b, w):
+    return np.array([int(i) for i in np.binary_repr(b, width=w)])
+
+def list2int(l):
+    return sum(i*(2**n) for n, i in enumerate(l[::-1]))
+    
 
 from petsc4py import PETSc
 

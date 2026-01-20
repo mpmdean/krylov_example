@@ -314,12 +314,7 @@ def ed_1v1c_py(shell_name, *, shell_level=None, v_soc=None, c_soc=0,
     if verbose > 0:
         print("edrixs >>> ED Done !")
 
-#    hmat_i = scipy.sparse.csr_matrix(hmat_i)
-#    hmat_n = scipy.sparse.csr_matrix(hmat_n)
-
-    return eval_i, evec_i, eval_n, evec_n, trans_op, basis_i, basis_n, hmat_i, hmat_n, ntot, emat_i, emat_n, umat_i, umat_n
-
-
+    return eval_i, eval_n, trans_op, emat_i, emat_n, umat_i, umat_n, ntot
 
 
 def rixs_1v1c_py(eval_i, eval_n, trans_op, ominc, eloss, *,
