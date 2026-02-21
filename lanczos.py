@@ -76,7 +76,7 @@ def lanczos_tridiagonal_scipy(H, v0, m):
     return alphas[:neff], betas[:neff-1], norm_psi**2
 
 
-def lanczos_tridiagonal(H, v, m):
+def lanczos_tridiagonal(H, v, nkryl):
     r"""
     Perform the Lanczos tridiagonalization of a Hermitian operator :math:`H`
     starting from an initial vector :math:`v_0`, producing the diagonal
@@ -109,7 +109,7 @@ def lanczos_tridiagonal(H, v, m):
         Hermitian operator for which the Lanczos projection is constructed.
     v0 : (n,) PETSc sparse vector
         Initial seed vector :math:`v_0`, which will be normalized internally.
-    m : int
+    nkryl : int
         Maximum number of Lanczos iterations (Krylov dimension).
 
     Returns
@@ -124,8 +124,8 @@ def lanczos_tridiagonal(H, v, m):
     """
     norm = v.normalize()
     
-    alphas = np.zeros(m, dtype=float)
-    betas  = np.zeros(m - 1, dtype=float)
+    alphas = np.zeros(nkryl, dtype=float)
+    betas  = np.zeros(nkryl - 1, dtype=float)
     
     w = H.createVecLeft()
     H.mult(v, w)
@@ -134,11 +134,11 @@ def lanczos_tridiagonal(H, v, m):
     w.axpy(-alphas[0], v)
     
     neff = 1
-    for j in range(1, m):
+    for j in range(1, nkryl):
         beta = w.norm()
         if beta == 0:
             # lucky breakdown: actual Krylov dimension < m
-            return alphas[:j], betas[:j-1]
+            return alphas[:j], betas[:j-1], norm**2
         betas[j-1] = beta
         v_old = v.copy()
         v = w.copy()

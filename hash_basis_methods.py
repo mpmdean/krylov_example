@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import List, Tuple
 from itertools import accumulate
 
+from slepc4py import SLEPc
+from petsc4py import PETSc
 
 @dataclass(slots=True)
 class FockBinByN:
@@ -15,7 +17,7 @@ class FockBinByN:
     Parameters
     ----------
     shapes
-        List of ``(norb, noccu)`` pairs, one per subspace.
+        List of ``(norb, noccu)`get ` pairs, one per subspace.
 
     Attributes
     ----------
@@ -393,14 +395,127 @@ def min_max_decode(shapes):
     return b_min, b_max
  
 
-from petsc4py import PETSc
+# from petsc4py import PETSc
 
-def get_H_emat(emat, lb, rb=None):
-    indptr, indices, data, nl, nr = two_fermion_B(emat, lb, rb)
-    return PETSc.Mat().createAIJ(size=(nl, nr), csr=(indptr, indices, data))
+# def get_H_emat(comm, emat, lb, rb=None):
+#     assert comm.Get_size() == 1, " paralization decision not taken yparalleet. "
+#     indptr, indices, data, nl, nr = two_fermion_B(emat, lb, rb)
+#     return PETSc.Mat().createAIJ(comm=comm, size=(nl, nr), csr=(indptr, indices, data))
 
 
-def get_H_umat(umat, lb, rb=None):
-    indptr, indices, data, nl, nr = four_fermion_B(umat, lb, rb)
-    return PETSc.Mat().createAIJ(size=(nl, nr), csr=(indptr, indices, data))
+# def get_H_umat(comm, umat, lb, rb=None):
+#     assert comm.Get_size() == 1, " paralization decision not taken yparalleet. "
+#     indptr, indices, data, nl, nr = four_fermion_B(umat, lb, rb)
+#     return PETSc.Mat().createAIJ(comm=comm, size=(nl, nr), csr=(indptr, indices, data))
 
+def get_H(comm, emat, umat, lb, rb=None, tol_e=1e-10, tol_u=1e-10,
+                nnz_guess_per_row=None):
+    """
+    Assemble H = sum_ij emat_ij f_i^† f_j + sum_ijkl umat_lkji f_l^† f_k^† f_j f_i
+    into a single parallel AIJ matrix.
+
+    Work is distributed by owned columns (right-basis indices icfg).
+    """
+    if rb is None:
+        rb = lb
+    nl, nr = lb.dim, rb.dim
+    norb = rb.num_orbitals
+
+    H = PETSc.Mat().create(comm=comm)
+    H.setSizes(((None, nl), (None, nr)))
+    H.setType(PETSc.Mat.Type.AIJ)
+
+    # Heuristic preallocation (tune as needed); allow growth to stay correct.
+    if nnz_guess_per_row is None:
+        # crude but safe starting point
+        ne = int(np.count_nonzero(np.abs(emat) > tol_e)) if emat is not None else 0
+        nu = int(np.count_nonzero(np.abs(umat) > tol_u)) if umat is not None else 0
+        # cap to something reasonable
+        nnz_guess_per_row = max(8, min(nr, 16 + ne + 2*min(nu, 32)))
+
+    H.setPreallocationNNZ(nnz_guess_per_row)
+    H.setOption(PETSc.Mat.Option.NEW_NONZERO_ALLOCATION_ERR, False)
+    H.setUp()
+
+    cstart, cend = H.getOwnershipRangeColumn()
+
+    rowacc = {}  # row -> dict(col -> value)
+
+    # --- 1-body contributions ---
+    if emat is not None:
+        a1, a2 = np.nonzero(np.abs(emat) > tol_e)
+        nonzero_e = np.stack((a1, a2), axis=-1)
+
+        for iorb, jorb in nonzero_e:
+            e = emat[iorb, jorb]
+            for icfg in range(cstart, cend):
+                b0 = rb.decode(icfg)
+
+                if bit_at_orb(b0, jorb, norb) == 0:
+                    continue
+                s1 = sign_count(b0, jorb, norb)
+                b = set_zero_at_orb(b0, jorb, norb)
+
+                if bit_at_orb(b, iorb, norb) == 1:
+                    continue
+                s2 = sign_count(b, iorb, norb)
+                b = set_one_at_orb(b, iorb, norb)
+
+                jcfg = lb.encode(b)
+                if jcfg == -1:
+                    continue
+
+                val = e * s1 * s2
+                d = rowacc.setdefault(jcfg, {})
+                d[icfg] = d.get(icfg, 0.0) + val
+
+    # --- 2-body contributions ---
+    if umat is not None:
+        a1, a2, a3, a4 = np.nonzero(np.abs(umat) > tol_u)
+        nonzero_u = np.stack((a1, a2, a3, a4), axis=-1)
+
+        for lorb, korb, jorb, iorb in nonzero_u:
+            if iorb == jorb or korb == lorb:
+                continue
+            u = umat[lorb, korb, jorb, iorb]
+
+            for icfg in range(cstart, cend):
+                b0 = rb.decode(icfg)
+
+                if bit_at_orb(b0, iorb, norb) == 0:
+                    continue
+                s1 = sign_count(b0, iorb, norb)
+                b = set_zero_at_orb(b0, iorb, norb)
+
+                if bit_at_orb(b, jorb, norb) == 0:
+                    continue
+                s2 = sign_count(b, jorb, norb)
+                b = set_zero_at_orb(b, jorb, norb)
+
+                if bit_at_orb(b, korb, norb) == 1:
+                    continue
+                s3 = sign_count(b, korb, norb)
+                b = set_one_at_orb(b, korb, norb)
+
+                if bit_at_orb(b, lorb, norb) == 1:
+                    continue
+                s4 = sign_count(b, lorb, norb)
+                b = set_one_at_orb(b, lorb, norb)
+
+                jcfg = lb.encode(b)
+                if jcfg == -1:
+                    continue
+
+                val = u * s1 * s2 * s3 * s4
+                d = rowacc.setdefault(jcfg, {})
+                d[icfg] = d.get(icfg, 0.0) + val
+
+    # Insert everything (off-proc rows ok; PETSc communicates on assembly)
+    for row, coldict in rowacc.items():
+        cols = np.fromiter(coldict.keys(), dtype=PETSc.IntType)
+        vals = np.fromiter(coldict.values(), dtype=np.complex128)
+        H.setValues(row, cols, vals, addv=PETSc.InsertMode.ADD_VALUES)
+
+    H.assemblyBegin()
+    H.assemblyEnd()
+    return H
